@@ -2,8 +2,9 @@ name: Embeddables Deploy
 description: >
   Deploy a Worker build listed under hosting.apps in embeddables/config.yaml.
   Every push gets commit and branch URLs on embd.co; a push to the app's
-  production branch also goes live in production. On pull requests the action
-  comments the preview URL. Authenticates with the project deploy key.
+  production branch also goes live in production. Run it on push and on
+  pull_request (opened, reopened) so every pull request gets a preview URL
+  comment. Authenticates with the project deploy key.
 author: Embeddables
 branding:
   icon: upload-cloud

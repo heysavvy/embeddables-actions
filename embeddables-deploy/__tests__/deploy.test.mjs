@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  COMMENT_MARKER,
+  deployTarget,
+  findPreviewComment,
   packPreviewArchive,
   previewComment,
   previewDeployHeaders,
@@ -117,8 +120,20 @@ test('previewComment puts the branch url first and the full sha on its own line'
   })
   assert.equal(
     body,
-    `Preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n`,
+    `Preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n\n${COMMENT_MARKER}\n`,
   )
+})
+
+test('findPreviewComment picks the bot comment that carries the marker', () => {
+  const ours = { id: 2, user: { type: 'Bot' }, body: `Preview: x\n\n${COMMENT_MARKER}\n` }
+  const comments = [
+    { id: 1, user: { type: 'Bot' }, body: 'Summary by another bot' },
+    { id: 3, user: { type: 'User' }, body: `quoting ${COMMENT_MARKER}` },
+    ours,
+  ]
+  assert.equal(findPreviewComment(comments), ours)
+  assert.equal(findPreviewComment([comments[0]]), null)
+  assert.equal(findPreviewComment(null), null)
 })
 
 test('previewDeployHeaders sends the deploy key and the project id', () => {
@@ -164,6 +179,48 @@ test('pushCommitTime reads the head commit only when it matches the sha', () => 
   assert.equal(pushCommitTime(event, 'b'.repeat(40)), null)
   assert.equal(pushCommitTime('not json', sha), null)
   assert.equal(pushCommitTime('{}', sha), null)
+})
+
+test('deployTarget uses the pushed ref and sha on push', () => {
+  const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF_NAME: 'feature/x', GITHUB_SHA: 'a'.repeat(40) }
+  assert.deepEqual(deployTarget(env, '{}'), {
+    branch: 'feature/x',
+    sha: 'a'.repeat(40),
+    pullNumber: null,
+  })
+  assert.throws(() => deployTarget({ GITHUB_EVENT_NAME: 'push' }, '{}'), /GITHUB_REF_NAME/)
+})
+
+function pullEvent({ headRepo = 'acme/site', baseRepo = 'acme/site' } = {}) {
+  return JSON.stringify({
+    pull_request: {
+      number: 7,
+      head: { ref: 'feature/x', sha: 'b'.repeat(40), repo: { full_name: headRepo } },
+      base: { ref: 'main', repo: { full_name: baseRepo } },
+    },
+  })
+}
+
+test('deployTarget uses the pull request head, not the merge ref', () => {
+  const env = { GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF_NAME: '7/merge', GITHUB_SHA: 'c'.repeat(40) }
+  assert.deepEqual(deployTarget(env, pullEvent()), {
+    branch: 'feature/x',
+    sha: 'b'.repeat(40),
+    pullNumber: 7,
+  })
+})
+
+test('deployTarget skips pull requests from forks', () => {
+  const env = { GITHUB_EVENT_NAME: 'pull_request' }
+  const target = deployTarget(env, pullEvent({ headRepo: 'someone/site' }))
+  assert.match(target.skip, /fork/)
+})
+
+test('deployTarget rejects a pull_request event without a head', () => {
+  assert.throws(
+    () => deployTarget({ GITHUB_EVENT_NAME: 'pull_request' }, JSON.stringify({ pull_request: {} })),
+    /head ref/,
+  )
 })
 
 function tarNames(bytes) {
