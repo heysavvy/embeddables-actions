@@ -1,0 +1,47 @@
+name: Embeddables Deploy
+description: >
+  Deploy a Worker build listed under hosting.apps in embeddables/config.yaml.
+  Every push gets commit and branch URLs on embd.co; a push to the app's
+  production branch also goes live in production. On pull requests the action
+  comments the preview URL. Authenticates with the project deploy key.
+author: Embeddables
+branding:
+  icon: upload-cloud
+  color: purple
+inputs:
+  app:
+    description: Hosting app slug. Required when config lists more than one app.
+    required: false
+    default: ''
+  deploy-key:
+    description: >
+      Project deploy key (edk_…). Pass the repository secret
+      EMBEDDABLES_DEPLOY_KEY.
+    required: true
+  api-origin:
+    description: Embeddables API origin.
+    required: false
+    default: https://backend.embeddables.com
+  config:
+    description: Path to embeddables/config.yaml from the repository root.
+    required: false
+    default: embeddables/config.yaml
+outputs:
+  branch-url:
+    description: URL for the branch deploy.
+    value: ${{ steps.deploy.outputs.branch-url }}
+  commit-url:
+    description: URL for this commit's deploy.
+    value: ${{ steps.deploy.outputs.commit-url }}
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      shell: bash
+      env:
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_DEPLOY_KEY: ${{ inputs.deploy-key }}
+        INPUT_API_ORIGIN: ${{ inputs.api-origin }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node "${{ github.action_path }}/deploy.mjs"
