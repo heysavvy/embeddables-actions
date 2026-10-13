@@ -69,19 +69,28 @@ export function pushCommitTime(eventJson, sha) {
   return null
 }
 
+/** Marker of comments written before markers were per app. */
 export const COMMENT_MARKER = '<!-- embeddables-deploy -->'
 
-export function previewComment({ sha, branchUrl, commitUrl }) {
-  return `Preview: ${branchUrl}\n\n${sha}\n\nCommit preview: ${commitUrl}\n\n${COMMENT_MARKER}\n`
+export function commentMarker(appSlug) {
+  return `<!-- embeddables-deploy:${appSlug} -->`
 }
 
-/** The action's earlier comment on the pull request, if any, so a new deploy edits it in place. */
-export function findPreviewComment(comments) {
+export function previewComment({ appSlug, sha, branchUrl, commitUrl }) {
+  return `**${appSlug}** preview: ${branchUrl}\n\n${sha}\n\nCommit preview: ${commitUrl}\n\n${commentMarker(appSlug)}\n`
+}
+
+/**
+ * The action's earlier comment for this app on the pull request, if any, so a
+ * new deploy edits it in place. Each app in a repo keeps its own comment.
+ */
+export function findPreviewComment(comments, appSlug) {
   if (!Array.isArray(comments)) return null
+  const bots = comments.filter((comment) => comment?.user?.type === 'Bot')
   return (
-    comments.find(
-      (comment) => comment?.user?.type === 'Bot' && comment.body?.includes(COMMENT_MARKER),
-    ) ?? null
+    bots.find((comment) => comment.body?.includes(commentMarker(appSlug))) ??
+    bots.find((comment) => comment.body?.includes(COMMENT_MARKER)) ??
+    null
   )
 }
 
@@ -276,7 +285,9 @@ async function main() {
     throw new Error(`Deploy failed (${response.status}): ${detail}`)
   }
 
+  const appSlug = payload.appSlug ?? app.slug
   const comment = previewComment({
+    appSlug,
     sha,
     branchUrl: payload.branchUrl,
     commitUrl: payload.commitUrl,
@@ -294,6 +305,7 @@ async function main() {
     repository: process.env.GITHUB_REPOSITORY,
     sha,
     pullNumber,
+    appSlug,
     body: comment,
   })
 }
@@ -340,7 +352,7 @@ async function fetchCommitTime({ token, repository, sha }) {
   return commit?.commit?.committer?.date ?? null
 }
 
-async function commentOnPulls({ token, repository, sha, pullNumber, body }) {
+async function commentOnPulls({ token, repository, sha, pullNumber, appSlug, body }) {
   if (!token || !repository) return
   const headers = githubHeaders(token)
   let numbers = pullNumber === null ? [] : [pullNumber]
@@ -356,7 +368,7 @@ async function commentOnPulls({ token, repository, sha, pullNumber, body }) {
   for (const number of numbers) {
     const commentsUrl = `https://api.github.com/repos/${repository}/issues/${number}/comments`
     const listed = await fetch(`${commentsUrl}?per_page=100`, { headers })
-    const existing = listed.ok ? findPreviewComment(await listed.json()) : null
+    const existing = listed.ok ? findPreviewComment(await listed.json(), appSlug) : null
     const posted = await fetch(
       existing
         ? `https://api.github.com/repos/${repository}/issues/comments/${existing.id}`
