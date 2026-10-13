@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  COMMENT_MARKER,
   deployTarget,
+  findPreviewComment,
   packPreviewArchive,
   previewComment,
   previewDeployHeaders,
@@ -118,8 +120,20 @@ test('previewComment puts the branch url first and the full sha on its own line'
   })
   assert.equal(
     body,
-    `Preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n`,
+    `Preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n\n${COMMENT_MARKER}\n`,
   )
+})
+
+test('findPreviewComment picks the bot comment that carries the marker', () => {
+  const ours = { id: 2, user: { type: 'Bot' }, body: `Preview: x\n\n${COMMENT_MARKER}\n` }
+  const comments = [
+    { id: 1, user: { type: 'Bot' }, body: 'Summary by another bot' },
+    { id: 3, user: { type: 'User' }, body: `quoting ${COMMENT_MARKER}` },
+    ours,
+  ]
+  assert.equal(findPreviewComment(comments), ours)
+  assert.equal(findPreviewComment([comments[0]]), null)
+  assert.equal(findPreviewComment(null), null)
 })
 
 test('previewDeployHeaders sends the deploy key and the project id', () => {

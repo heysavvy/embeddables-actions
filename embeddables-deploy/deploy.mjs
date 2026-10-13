@@ -69,8 +69,20 @@ export function pushCommitTime(eventJson, sha) {
   return null
 }
 
+export const COMMENT_MARKER = '<!-- embeddables-deploy -->'
+
 export function previewComment({ sha, branchUrl, commitUrl }) {
-  return `Preview: ${branchUrl}\n\n${sha}\n\nCommit preview: ${commitUrl}\n`
+  return `Preview: ${branchUrl}\n\n${sha}\n\nCommit preview: ${commitUrl}\n\n${COMMENT_MARKER}\n`
+}
+
+/** The action's earlier comment on the pull request, if any, so a new deploy edits it in place. */
+export function findPreviewComment(comments) {
+  if (!Array.isArray(comments)) return null
+  return (
+    comments.find(
+      (comment) => comment?.user?.type === 'Bot' && comment.body?.includes(COMMENT_MARKER),
+    ) ?? null
+  )
 }
 
 export function packPreviewArchive(files) {
@@ -342,10 +354,15 @@ async function commentOnPulls({ token, repository, sha, pullNumber, body }) {
     numbers = pulls.map((pull) => pull?.number).filter((number) => typeof number === 'number')
   }
   for (const number of numbers) {
+    const commentsUrl = `https://api.github.com/repos/${repository}/issues/${number}/comments`
+    const listed = await fetch(`${commentsUrl}?per_page=100`, { headers })
+    const existing = listed.ok ? findPreviewComment(await listed.json()) : null
     const posted = await fetch(
-      `https://api.github.com/repos/${repository}/issues/${number}/comments`,
+      existing
+        ? `https://api.github.com/repos/${repository}/issues/comments/${existing.id}`
+        : commentsUrl,
       {
-        method: 'POST',
+        method: existing ? 'PATCH' : 'POST',
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ body }),
       },
