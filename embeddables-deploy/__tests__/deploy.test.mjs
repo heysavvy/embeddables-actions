@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   COMMENT_MARKER,
+  commentMarker,
   deployTarget,
   findPreviewComment,
   packPreviewArchive,
@@ -114,26 +115,35 @@ test('readPreviewConfig reads a flow-style hosting app', () => {
 test('previewComment puts the branch url first and the full sha on its own line', () => {
   const sha = 'a'.repeat(40)
   const body = previewComment({
+    appSlug: 'funnel',
     sha,
     branchUrl: 'https://main-a1b2c3---funnel---alice.embd.co',
     commitUrl: 'https://aaaaaaa---funnel---alice.embd.co',
   })
   assert.equal(
     body,
-    `Preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n\n${COMMENT_MARKER}\n`,
+    `**funnel** preview: https://main-a1b2c3---funnel---alice.embd.co\n\n${sha}\n\nCommit preview: https://aaaaaaa---funnel---alice.embd.co\n\n${commentMarker('funnel')}\n`,
   )
 })
 
-test('findPreviewComment picks the bot comment that carries the marker', () => {
-  const ours = { id: 2, user: { type: 'Bot' }, body: `Preview: x\n\n${COMMENT_MARKER}\n` }
+test('findPreviewComment picks the bot comment for the same app', () => {
+  const funnel = { id: 2, user: { type: 'Bot' }, body: `x\n\n${commentMarker('funnel')}\n` }
+  const portal = { id: 4, user: { type: 'Bot' }, body: `x\n\n${commentMarker('portal')}\n` }
   const comments = [
     { id: 1, user: { type: 'Bot' }, body: 'Summary by another bot' },
-    { id: 3, user: { type: 'User' }, body: `quoting ${COMMENT_MARKER}` },
-    ours,
+    { id: 3, user: { type: 'User' }, body: `quoting ${commentMarker('funnel')}` },
+    portal,
+    funnel,
   ]
-  assert.equal(findPreviewComment(comments), ours)
-  assert.equal(findPreviewComment([comments[0]]), null)
-  assert.equal(findPreviewComment(null), null)
+  assert.equal(findPreviewComment(comments, 'funnel'), funnel)
+  assert.equal(findPreviewComment(comments, 'portal'), portal)
+  assert.equal(findPreviewComment(comments, 'shop'), null)
+  assert.equal(findPreviewComment(null, 'funnel'), null)
+})
+
+test('findPreviewComment adopts a comment written with the old shared marker', () => {
+  const legacy = { id: 5, user: { type: 'Bot' }, body: `Preview: x\n\n${COMMENT_MARKER}\n` }
+  assert.equal(findPreviewComment([legacy], 'funnel'), legacy)
 })
 
 test('previewDeployHeaders sends the deploy key and the project id', () => {

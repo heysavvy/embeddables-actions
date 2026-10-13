@@ -6,7 +6,7 @@ GitHub Actions for Embeddables customers.
 
 Deploys a Worker build to Embeddables hosting. Every push gets a commit URL and a branch URL on `embd.co`. A push to the app's production branch (usually `main`) also goes live on the production hostname and any custom domains.
 
-Opening a pull request deploys its branch and comments the preview URL on it, even when the branch was pushed before the pull request existed. Later pushes to the branch update the preview. Pull requests from forks are skipped, because they cannot read the deploy key.
+Opening a pull request deploys its branch and comments the preview URL on it, one comment per app, even when the branch was pushed before the pull request existed. Later pushes to the branch update the preview. Pull requests from forks are skipped, because they cannot read the deploy key.
 
 ### Setup
 
