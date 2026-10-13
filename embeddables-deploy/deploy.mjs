@@ -211,9 +211,15 @@ async function main() {
     readFileSync(configPath, 'utf8'),
     process.env.INPUT_APP,
   )
-  const branch = process.env.GITHUB_REF_NAME
-  const sha = process.env.GITHUB_SHA
-  if (!branch || !sha) throw new Error('GITHUB_REF_NAME and GITHUB_SHA are required.')
+  const eventText = process.env.GITHUB_EVENT_PATH
+    ? readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')
+    : null
+  const target = deployTarget(process.env, eventText)
+  if (target.skip) {
+    console.log(`::notice::${target.skip}`)
+    return
+  }
+  const { branch, sha, pullNumber } = target
   const deployKey = process.env.INPUT_DEPLOY_KEY
   if (process.env.GITHUB_ACTIONS && typeof deployKey === 'string' && deployKey.trim()) {
     // * Action inputs are not masked even when the value came from secrets.
@@ -240,9 +246,16 @@ async function main() {
       appSlug: app.slug,
       branch,
       sha,
-      committedAt: process.env.GITHUB_EVENT_PATH
-        ? pushCommitTime(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'), sha)
-        : null,
+      committedAt:
+        pullNumber === null
+          ? eventText
+            ? pushCommitTime(eventText, sha)
+            : null
+          : await fetchCommitTime({
+              token: process.env.GITHUB_TOKEN,
+              repository: process.env.GITHUB_REPOSITORY,
+              sha,
+            }),
     }),
   })
   const payload = await response.json().catch(() => ({}))
@@ -268,28 +281,69 @@ async function main() {
     token: process.env.GITHUB_TOKEN,
     repository: process.env.GITHUB_REPOSITORY,
     sha,
+    pullNumber,
     body: comment,
   })
 }
 
-async function commentOnPulls({ token, repository, sha, body }) {
-  if (!token || !repository) return
-  const headers = {
+/**
+ * Branch, commit, and pull request to deploy for this run. On a pull request
+ * event GITHUB_REF_NAME is `<n>/merge` and GITHUB_SHA is a merge commit, so
+ * both come from the pull request head instead.
+ */
+export function deployTarget(env, eventText) {
+  const isPullEvent = env.GITHUB_EVENT_NAME === 'pull_request'
+  if (!isPullEvent) {
+    if (!env.GITHUB_REF_NAME || !env.GITHUB_SHA) {
+      throw new Error('GITHUB_REF_NAME and GITHUB_SHA are required.')
+    }
+    return { branch: env.GITHUB_REF_NAME, sha: env.GITHUB_SHA, pullNumber: null }
+  }
+  const pull = eventText ? JSON.parse(eventText).pull_request : null
+  if (!pull?.head?.ref || !pull.head.sha || typeof pull.number !== 'number') {
+    throw new Error('The pull_request event has no head ref, head sha, or number.')
+  }
+  if (pull.head.repo?.full_name !== pull.base?.repo?.full_name) {
+    return { skip: 'Skipping deploy for a pull request from a fork: it has no access to the deploy key.' }
+  }
+  return { branch: pull.head.ref, sha: pull.head.sha, pullNumber: pull.number }
+}
+
+function githubHeaders(token) {
+  return {
     Accept: 'application/vnd.github+json',
     Authorization: `Bearer ${token}`,
     'User-Agent': 'embeddables-deploy',
     'X-GitHub-Api-Version': API_VERSION,
   }
-  const listed = await fetch(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, {
-    headers,
+}
+
+async function fetchCommitTime({ token, repository, sha }) {
+  if (!token || !repository) return null
+  const response = await fetch(`https://api.github.com/repos/${repository}/commits/${sha}`, {
+    headers: githubHeaders(token),
   })
-  if (!listed.ok) return
-  const pulls = await listed.json()
-  if (!Array.isArray(pulls)) return
-  for (const pull of pulls) {
-    if (!pull || typeof pull.number !== 'number') continue
+  if (!response.ok) return null
+  const commit = await response.json()
+  return commit?.commit?.committer?.date ?? null
+}
+
+async function commentOnPulls({ token, repository, sha, pullNumber, body }) {
+  if (!token || !repository) return
+  const headers = githubHeaders(token)
+  let numbers = pullNumber === null ? [] : [pullNumber]
+  if (pullNumber === null) {
+    const listed = await fetch(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, {
+      headers,
+    })
+    if (!listed.ok) return
+    const pulls = await listed.json()
+    if (!Array.isArray(pulls)) return
+    numbers = pulls.map((pull) => pull?.number).filter((number) => typeof number === 'number')
+  }
+  for (const number of numbers) {
     const posted = await fetch(
-      `https://api.github.com/repos/${repository}/issues/${pull.number}/comments`,
+      `https://api.github.com/repos/${repository}/issues/${number}/comments`,
       {
         method: 'POST',
         headers: { ...headers, 'content-type': 'application/json' },
