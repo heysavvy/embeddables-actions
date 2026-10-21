@@ -4,7 +4,8 @@ description: >
   Every push gets commit and branch URLs on embd.co; a push to the app's
   production branch also goes live in production. Run it on push and on
   pull_request (opened, reopened) so every pull request gets a preview URL
-  comment. Authenticates with the project deploy key.
+  comment. Only static files the app does not already have are uploaded.
+  Authenticates with the project deploy key.
 author: Embeddables
 branding:
   icon: upload-cloud
@@ -34,6 +35,12 @@ outputs:
   commit-url:
     description: URL for this commit's deploy.
     value: ${{ steps.deploy.outputs.commit-url }}
+  uploaded-files:
+    description: Number of static files uploaded by this run.
+    value: ${{ steps.deploy.outputs.uploaded-files }}
+  total-files:
+    description: Number of static files in the client build.
+    value: ${{ steps.deploy.outputs.total-files }}
 runs:
   using: composite
   steps:
