@@ -4,14 +4,15 @@ import test from 'node:test'
 import {
   COMMENT_MARKER,
   commentMarker,
+  deployFailureMessage,
+  deployOptions,
   deployTarget,
   findPreviewComment,
-  packPreviewArchive,
   previewComment,
-  previewDeployHeaders,
   pushCommitTime,
   readPreviewConfig,
 } from '../deploy.mjs'
+import { DeployError } from '../vendor/deploy.mjs'
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001'
 
@@ -44,15 +45,6 @@ test('readPreviewConfig requires the app input when several apps are listed', ()
   ].join('\n')
   assert.throws(() => readPreviewConfig(text), /more than one hosting app/)
   assert.equal(readPreviewConfig(text, 'portal').app.slug, 'portal')
-})
-
-test('packPreviewArchive keeps the server and client prefixes', () => {
-  const tar = packPreviewArchive([
-    { name: 'server/index.js', bytes: Buffer.from('export default {}') },
-    { name: 'server/wrangler.json', bytes: Buffer.from('{"main":"index.js"}') },
-    { name: 'client/index.html', bytes: Buffer.from('<html></html>') },
-  ])
-  assert.deepEqual(tarNames(tar), ['server/index.js', 'server/wrangler.json', 'client/index.html'])
 })
 
 test('readPreviewConfig rejects an invalid slug and an unsafe path', () => {
@@ -146,40 +138,62 @@ test('findPreviewComment adopts a comment written with the old shared marker', (
   assert.equal(findPreviewComment([legacy], 'funnel'), legacy)
 })
 
-test('previewDeployHeaders sends the deploy key and the project id', () => {
+const APP = { slug: 'funnel', server: 'dist/server', client: 'dist/client' }
+
+test('deployOptions resolves build folders and trims the deploy key', () => {
   assert.deepEqual(
-    previewDeployHeaders({
+    deployOptions({
+      root: '/repo',
       projectId: PROJECT_ID,
+      app: APP,
       deployKey: ' edk_abc ',
+      branch: 'main',
+      sha: 'a'.repeat(40),
+      committedAt: null,
+      apiOrigin: 'https://api.example.com/',
+    }),
+    {
+      deployKey: 'edk_abc',
+      projectId: PROJECT_ID,
       appSlug: 'funnel',
       branch: 'main',
       sha: 'a'.repeat(40),
-    }),
-    {
-      'content-type': 'application/gzip',
-      authorization: 'Bearer edk_abc',
-      'x-project-id': PROJECT_ID,
-      'x-hosting-app': 'funnel',
-      'x-git-branch': 'main',
-      'x-git-sha': 'a'.repeat(40),
+      serverDir: '/repo/dist/server',
+      clientDir: '/repo/dist/client',
+      apiOrigin: 'https://api.example.com',
     },
   )
   assert.throws(
-    () => previewDeployHeaders({ projectId: PROJECT_ID, deployKey: '  ' }),
+    () => deployOptions({ root: '/repo', projectId: PROJECT_ID, app: APP, deployKey: '  ' }),
     /EMBEDDABLES_DEPLOY_KEY/,
   )
 })
 
-test('previewDeployHeaders sends the commit time when known', () => {
-  const headers = previewDeployHeaders({
+test('deployOptions sends the commit time when known and defaults the origin', () => {
+  const options = deployOptions({
+    root: '/repo',
     projectId: PROJECT_ID,
+    app: APP,
     deployKey: 'edk_abc',
-    appSlug: 'funnel',
     branch: 'main',
     sha: 'a'.repeat(40),
     committedAt: '2026-10-12T15:00:00-03:00',
+    apiOrigin: '',
   })
-  assert.equal(headers['x-git-commit-time'], '2026-10-12T15:00:00-03:00')
+  assert.equal(options.committedAt, '2026-10-12T15:00:00-03:00')
+  assert.equal(options.apiOrigin, 'https://backend.embeddables.com')
+})
+
+test('deployFailureMessage includes the API status and code', () => {
+  assert.equal(
+    deployFailureMessage(new DeployError('Deploy key is invalid.', { status: 401, code: 'unauthorized' })),
+    'Deploy failed (401 unauthorized): Deploy key is invalid.',
+  )
+  assert.equal(
+    deployFailureMessage(new DeployError('Server build has no files.')),
+    'Deploy failed: Server build has no files.',
+  )
+  assert.equal(deployFailureMessage(new Error('Config not found.')), 'Config not found.')
 })
 
 test('pushCommitTime reads the head commit only when it matches the sha', () => {
@@ -232,17 +246,3 @@ test('deployTarget rejects a pull_request event without a head', () => {
     /head ref/,
   )
 })
-
-function tarNames(bytes) {
-  const names = []
-  let offset = 0
-  while (offset + 512 <= bytes.length) {
-    const header = bytes.subarray(offset, offset + 512)
-    if (header.every((byte) => byte === 0)) break
-    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*/, '')
-    const size = Number.parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*/, ''), 8)
-    names.push(name)
-    offset += 512 + Math.ceil(size / 512) * 512
-  }
-  return names
-}

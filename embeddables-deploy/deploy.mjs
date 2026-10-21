@@ -1,8 +1,8 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { gzipSync } from 'node:zlib'
-// * Vendored parser: this file runs from the action checkout, which has no node_modules.
+// * Vendored modules: this file runs from the action checkout, which has no node_modules.
+import { DEFAULT_API_ORIGIN, DeployError, deployHostingApp } from './vendor/deploy.mjs'
 import { parseDocument } from './vendor/yaml.mjs'
 
 const API_VERSION = '2022-11-28'
@@ -41,20 +41,31 @@ export function readPreviewConfig(text, appSlug) {
   return { projectId, app }
 }
 
-export function previewDeployHeaders({ projectId, deployKey, appSlug, branch, sha, committedAt }) {
+/** Options for `deployHostingApp`, with build folders resolved from the repository root. */
+export function deployOptions({ root, projectId, app, deployKey, branch, sha, committedAt, apiOrigin }) {
   const key = typeof deployKey === 'string' ? deployKey.trim() : ''
   if (!key) {
     throw new Error('Pass deploy-key from the repository secret EMBEDDABLES_DEPLOY_KEY.')
   }
   return {
-    'content-type': 'application/gzip',
-    authorization: `Bearer ${key}`,
-    'x-project-id': projectId,
-    'x-hosting-app': appSlug,
-    'x-git-branch': branch,
-    'x-git-sha': sha,
-    ...(committedAt ? { 'x-git-commit-time': committedAt } : {}),
+    deployKey: key,
+    projectId,
+    appSlug: app.slug,
+    branch,
+    sha,
+    ...(committedAt ? { committedAt } : {}),
+    serverDir: join(root, app.server),
+    clientDir: join(root, app.client),
+    apiOrigin: (apiOrigin || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
   }
+}
+
+export function deployFailureMessage(error) {
+  if (error instanceof DeployError) {
+    const status = error.status === null ? '' : ` (${error.status}${error.code ? ` ${error.code}` : ''})`
+    return `Deploy failed${status}: ${error.message}`
+  }
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** Head commit time from the push event, so out-of-order deploys never move an alias back. */
@@ -92,31 +103,6 @@ export function findPreviewComment(comments, appSlug) {
     bots.find((comment) => comment.body?.includes(COMMENT_MARKER)) ??
     null
   )
-}
-
-export function packPreviewArchive(files) {
-  const chunks = []
-  for (const file of files) {
-    const name = file.name.split(sep).join('/')
-    if (name.length > 100) throw new Error(`Archive path is longer than 100 characters: ${name}`)
-    const data = file.bytes
-    chunks.push(tarHeader(name, data.length))
-    chunks.push(data)
-    const pad = (512 - (data.length % 512)) % 512
-    if (pad) chunks.push(Buffer.alloc(pad))
-  }
-  chunks.push(Buffer.alloc(1024))
-  return Buffer.concat(chunks)
-}
-
-export function filesUnder(root, directory, prefix) {
-  const base = join(root, directory)
-  const files = []
-  walk(base, (full) => {
-    const name = `${prefix}/${relative(base, full).split(sep).join('/')}`
-    files.push({ name, bytes: readFileSync(full) })
-  })
-  return files
 }
 
 function parseConfigDocument(text) {
@@ -181,50 +167,6 @@ function relativeDir(value, context) {
   return value
 }
 
-function walk(directory, visit) {
-  let entries
-  try {
-    entries = readdirSync(directory, { withFileTypes: true })
-  } catch (error) {
-    if (error && error.code === 'ENOENT') {
-      throw new Error(`Build directory was not found: ${directory}`, { cause: error })
-    }
-    throw error
-  }
-  for (const entry of entries) {
-    const full = join(directory, entry.name)
-    if (entry.isDirectory()) walk(full, visit)
-    else if (entry.isFile() || statSync(full).isFile()) visit(full)
-  }
-}
-
-function tarHeader(name, size) {
-  const header = Buffer.alloc(512, 0)
-  header.write(name, 0, 'ascii')
-  header.write('0000644\0', 100, 'ascii')
-  header.write('0000000\0', 108, 'ascii')
-  header.write('0000000\0', 116, 'ascii')
-  writeOctal(header, 124, 12, size)
-  writeOctal(header, 136, 12, 0)
-  header.fill(0x20, 148, 156)
-  header[156] = 48
-  header.write('ustar\0', 257, 'ascii')
-  header.write('00', 263, 'ascii')
-  let sum = 0
-  for (const byte of header) sum += byte
-  writeOctal(header, 148, 8, sum)
-  return header
-}
-
-function writeOctal(buffer, offset, length, value) {
-  const text = value
-    .toString(8)
-    .padStart(length - 1, '0')
-    .slice(-(length - 1))
-  buffer.write(text, offset, length - 1, 'ascii')
-  buffer[offset + length - 1] = 0
-}
-
 async function main() {
   const root = process.env.GITHUB_WORKSPACE || process.cwd()
   const configPath = join(root, process.env.INPUT_CONFIG || 'embeddables/config.yaml')
@@ -247,42 +189,31 @@ async function main() {
     console.log(`::add-mask::${deployKey.trim()}`)
   }
 
-  const files = [
-    ...filesUnder(root, app.server, 'server'),
-    ...filesUnder(root, app.client, 'client'),
-  ]
-  if (!files.some((file) => file.name.startsWith('server/'))) {
-    throw new Error('The server directory has no files.')
-  }
-  const body = gzipSync(packPreviewArchive(files))
-  const origin = (
-    process.env.INPUT_API_ORIGIN || 'https://backend.embeddables.com'
-  ).replace(/\/$/, '')
-  const response = await fetch(`${origin}/hosting/v1/deploys`, {
-    method: 'POST',
-    body,
-    headers: previewDeployHeaders({
+  const committedAt =
+    pullNumber === null
+      ? eventText
+        ? pushCommitTime(eventText, sha)
+        : null
+      : await fetchCommitTime({
+          token: process.env.GITHUB_TOKEN,
+          repository: process.env.GITHUB_REPOSITORY,
+          sha,
+        })
+  const payload = await deployHostingApp(
+    deployOptions({
+      root,
       projectId,
+      app,
       deployKey,
-      appSlug: app.slug,
       branch,
       sha,
-      committedAt:
-        pullNumber === null
-          ? eventText
-            ? pushCommitTime(eventText, sha)
-            : null
-          : await fetchCommitTime({
-              token: process.env.GITHUB_TOKEN,
-              repository: process.env.GITHUB_REPOSITORY,
-              sha,
-            }),
+      committedAt,
+      apiOrigin: process.env.INPUT_API_ORIGIN,
     }),
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const detail = payload.detail || payload.title || response.statusText
-    throw new Error(`Deploy failed (${response.status}): ${detail}`)
+  )
+  console.log(`Uploaded ${payload.uploadedFiles} of ${payload.totalFiles} files.`)
+  if (payload.appRegistered) {
+    console.log(`::notice::Registered new hosting app ${payload.appSlug}.`)
   }
 
   const appSlug = payload.appSlug ?? app.slug
@@ -297,7 +228,8 @@ async function main() {
     const { appendFileSync } = await import('node:fs')
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `branch-url=${payload.branchUrl}\ncommit-url=${payload.commitUrl}\n`,
+      `branch-url=${payload.branchUrl}\ncommit-url=${payload.commitUrl}\n` +
+        `uploaded-files=${payload.uploadedFiles}\ntotal-files=${payload.totalFiles}\n`,
     )
   }
   await commentOnPulls({
@@ -385,7 +317,7 @@ async function commentOnPulls({ token, repository, sha, pullNumber, appSlug, bod
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error)
+    console.error(deployFailureMessage(error))
     process.exit(1)
   })
 }

@@ -8,6 +8,8 @@ Deploys a Worker build to Embeddables hosting. Every push gets a commit URL and 
 
 Opening a pull request deploys its branch and comments the preview URL on it, one comment per app, even when the branch was pushed before the pull request existed. Later pushes to the branch update the preview. Pull requests from forks are skipped, because they cannot read the deploy key.
 
+Static files are uploaded only when the app does not already have them, so a redeploy that changes only server code sends just the server bundle.
+
 ### Setup
 
 1. In the Embeddables dashboard, open **Deployments**, register the app, and create a deploy key.
@@ -55,7 +57,7 @@ Opening a pull request deploys its branch and comments the preview URL on it, on
            with:
              node-version: 22
          - run: npm ci && npm run build
-         - uses: heysavvy/embeddables-actions/embeddables-deploy@v1
+         - uses: heysavvy/embeddables-actions/embeddables-deploy@v2
            with:
              deploy-key: ${{ secrets.EMBEDDABLES_DEPLOY_KEY }}
    ```
@@ -73,3 +75,13 @@ Opening a pull request deploys its branch and comments the preview URL on it, on
 
 - `branch-url`: URL for the branch deploy.
 - `commit-url`: URL for this commit's deploy.
+- `uploaded-files`: number of static files this run uploaded.
+- `total-files`: number of static files in the client build.
+
+### Upgrading from `v1`
+
+Change `@v1` to `@v2`. Inputs, config, and the pull request comment are the same. `v1` sends the whole build as one archive on every run and keeps working. `v2` checks which static files the app already has and uploads only the rest.
+
+### Updating the deploy client
+
+The action runs from its own checkout without `node_modules`, so it bundles a published copy of [`@embeddables/deploy`](https://www.npmjs.com/package/@embeddables/deploy) in `embeddables-deploy/vendor/deploy.mjs`. To move to another version, run `scripts/vendor-deploy.sh <version>` and commit the result.
