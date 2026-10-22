@@ -1,7 +1,7 @@
-// Vendored from @embeddables/deploy@0.1.0 by scripts/vendor-deploy.sh. Do not edit by hand.
+// Vendored from @embeddables/deploy@0.2.0 by scripts/vendor-deploy.sh. Do not edit by hand.
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 //#region src/batches.ts
 const PART_OVERHEAD_BYTES = 512;
@@ -144,7 +144,7 @@ function writeOctal(block, offset, length, value) {
 //#region src/deploy.ts
 const DEFAULT_API_ORIGIN = "https://backend.embeddables.com";
 const DEFAULT_CONCURRENCY = 3;
-const BATCH_ATTEMPTS = 3;
+const REQUEST_ATTEMPTS = 3;
 /**
 * Uploads a built app in three steps: a manifest of static files, the files
 * the backend does not already have (in parallel batches), then the server
@@ -153,6 +153,7 @@ const BATCH_ATTEMPTS = 3;
 */
 async function deployHostingApp(options) {
 	const api = createApi(options);
+	const idempotencyKey = randomUUID();
 	const files = options.clientDir ? await readStaticFiles(options.clientDir) : [];
 	const server = await readServerArchive(options.serverDir);
 	const manifest = {};
@@ -167,9 +168,12 @@ async function deployHostingApp(options) {
 			size: file.size
 		});
 	}
-	const session = await api.json("/hosting/v1/deploys/sessions", {
+	const session = await api.retryingJson("/hosting/v1/deploys/sessions", {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			"idempotency-key": idempotencyKey
+		},
 		body: JSON.stringify({
 			appSlug: options.appSlug,
 			branch: options.branch,
@@ -193,7 +197,7 @@ async function deployHostingApp(options) {
 		});
 	});
 	return {
-		...await api.json(`/hosting/v1/deploys/sessions/${encodeURIComponent(session.sessionId)}/finalize`, {
+		...await api.retryingJson(`/hosting/v1/deploys/sessions/${encodeURIComponent(session.sessionId)}/finalize`, {
 			method: "POST",
 			headers: { "content-type": "application/gzip" },
 			body: server
@@ -233,19 +237,18 @@ function createApi(options) {
 		return response;
 	}
 	return {
-		async json(path, init) {
-			return await (await send(path, init)).json();
-		},
-		/** Retries network failures, 429, and 5xx. Batches are idempotent: bytes are keyed by their hash. */
+		/** Retries network failures, 429, and 5xx for retry-safe deploy operations. */
 		async retrying(path, init) {
 			for (let attempt = 1;; attempt++) try {
-				await send(path, init);
-				return;
+				return await send(path, init);
 			} catch (error) {
 				const status = error instanceof DeployError ? error.status : null;
-				if (!(status === null || status === 429 || status >= 500) || attempt >= BATCH_ATTEMPTS) throw error;
+				if (!(status === null || status === 429 || status >= 500) || attempt >= REQUEST_ATTEMPTS) throw error;
 				await sleep(500 * 3 ** (attempt - 1));
 			}
+		},
+		async retryingJson(path, init) {
+			return await (await this.retrying(path, init)).json();
 		}
 	};
 }
