@@ -3,7 +3,10 @@ import test from 'node:test'
 
 import {
   COMMENT_MARKER,
+  assembleDeployConfig,
   commentMarker,
+  configUploadFailureMessage,
+  deployConfigEnabled,
   deployFailureMessage,
   deployOptions,
   deployTarget,
@@ -13,6 +16,7 @@ import {
   readPreviewConfig,
 } from '../deploy.mjs'
 import { DeployError } from '../vendor/deploy.mjs'
+import { parseDocument } from '../vendor/yaml.mjs'
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001'
 
@@ -245,4 +249,82 @@ test('deployTarget rejects a pull_request event without a head', () => {
     () => deployTarget({ GITHUB_EVENT_NAME: 'pull_request' }, JSON.stringify({ pull_request: {} })),
     /head ref/,
   )
+})
+
+test('deployConfigEnabled is off only for false', () => {
+  for (const value of [undefined, '', 'true', 'TRUE']) assert.equal(deployConfigEnabled(value), true)
+  for (const value of ['false', ' False ']) assert.equal(deployConfigEnabled(value), false)
+})
+
+const FORM_ID = 'form_1'
+
+const CONFIG_WITH_PAGES = [
+  `projectId: "${PROJECT_ID}"`,
+  'forms:',
+  'pages:',
+  '  - path: /quiz',
+  '    title: Quiz',
+  'hosting:',
+  '  apps:',
+  '    - slug: funnel',
+  '      server: dist/server',
+  '      client: dist/client',
+  '',
+].join('\n')
+
+const CONFIG_WITH_FORM = CONFIG_WITH_PAGES.replace('forms:', `forms:\n  - id: ${FORM_ID}\n    name: Quiz form`)
+
+function assertValidYaml(output) {
+  assert.equal(parseDocument(output).errors.length, 0)
+}
+
+test('assembleDeployConfig keeps every section when there are no forms', () => {
+  const output = assembleDeployConfig(CONFIG_WITH_PAGES, () => {
+    throw new Error('no schema should be read')
+  })
+  assertValidYaml(output)
+  const document = JSON.parse(output)
+  assert.deepEqual(document.forms, [])
+  assert.deepEqual(document.pages, [{ path: '/quiz', title: 'Quiz' }])
+  assert.deepEqual(document.hosting, {
+    apps: [{ slug: 'funnel', server: 'dist/server', client: 'dist/client' }],
+  })
+})
+
+test('assembleDeployConfig merges each form with its schema', () => {
+  const schema = [`id: ${FORM_ID}`, 'name: Old', 'fields:', '  - key: email', 'version: 2', ''].join('\n')
+  const output = assembleDeployConfig(CONFIG_WITH_FORM, (id) => (id === FORM_ID ? schema : null))
+  assertValidYaml(output)
+  assert.deepEqual(JSON.parse(output).forms, [
+    { id: FORM_ID, name: 'Quiz form', version: 2, fields: [{ key: 'email' }] },
+  ])
+})
+
+test('assembleDeployConfig rejects a missing schema', () => {
+  assert.throws(
+    () => assembleDeployConfig(CONFIG_WITH_FORM, () => null),
+    { message: `embeddables/forms/${FORM_ID}/schema.yaml was not found.` },
+  )
+})
+
+test('assembleDeployConfig rejects a schema whose id does not match', () => {
+  assert.throws(
+    () => assembleDeployConfig(CONFIG_WITH_FORM, () => 'id: other\nfields: []\n'),
+    { message: `embeddables/forms/${FORM_ID}/schema.yaml id does not match.` },
+  )
+})
+
+test('assembleDeployConfig rejects schema YAML that does not parse', () => {
+  assert.throws(
+    () => assembleDeployConfig(CONFIG_WITH_FORM, () => 'fields: [\n'),
+    { message: `embeddables/forms/${FORM_ID}/schema.yaml could not be parsed.` },
+  )
+})
+
+test('configUploadFailureMessage labels the config upload', () => {
+  assert.equal(
+    configUploadFailureMessage(new DeployError('Bad config', { status: 422, code: 'validation.failed' })),
+    'Config upload failed (422 validation.failed): Bad config',
+  )
+  assert.equal(configUploadFailureMessage(new Error('boom')), 'Config upload failed: boom')
 })

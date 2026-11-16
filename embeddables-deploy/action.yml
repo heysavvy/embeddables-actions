@@ -5,7 +5,8 @@ description: >
   production branch also goes live in production. Run it on push and on
   pull_request (opened, reopened) so every pull request gets a preview URL
   comment. Only static files the app does not already have are uploaded.
-  Authenticates with the project deploy key.
+  Authenticates with the project deploy key. Before the hosting deploy it
+  uploads the branch's project config, like em deploy.
 author: Embeddables
 branding:
   icon: upload-cloud
@@ -28,6 +29,13 @@ inputs:
     description: Path to embeddables/config.yaml from the repository root.
     required: false
     default: embeddables/config.yaml
+  deploy-config:
+    description: >
+      Upload embeddables/config.yaml (with form schemas merged) to the project
+      config for this branch before the hosting deploy, like `em deploy`. Set
+      to 'false' to skip.
+    required: false
+    default: 'true'
 outputs:
   branch-url:
     description: URL for the branch deploy.
@@ -51,5 +59,6 @@ runs:
         INPUT_DEPLOY_KEY: ${{ inputs.deploy-key }}
         INPUT_API_ORIGIN: ${{ inputs.api-origin }}
         INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_DEPLOY_CONFIG: ${{ inputs.deploy-config }}
         GITHUB_TOKEN: ${{ github.token }}
       run: node "${{ github.action_path }}/deploy.mjs"

@@ -1,4 +1,4 @@
-// Vendored from @embeddables/deploy@0.2.0 by scripts/vendor-deploy.sh. Do not edit by hand.
+// Vendored from @embeddables/deploy@0.3.0 by scripts/vendor-deploy.sh. Do not edit by hand.
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
@@ -278,5 +278,21 @@ async function runPool(items, concurrency, task) {
 	if (failure) throw failure.error;
 }
 //#endregion
-export { DEFAULT_API_ORIGIN, DeployError, MAX_STATIC_ASSET_BYTES, deployHostingApp };
+//#region src/project-config.ts
+/**
+* Uploads a branch's deploy config, the same document and storage as `em deploy`. The backend
+* validates it. The PUT overwrites, so it retries like the deploy calls.
+*/
+async function deployProjectConfig(options) {
+	await createApi(options).retrying("/hosting/v1/project-config", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			branch: options.branch,
+			config_yaml: options.configYaml
+		})
+	});
+}
+//#endregion
+export { DEFAULT_API_ORIGIN, DeployError, MAX_STATIC_ASSET_BYTES, deployHostingApp, deployProjectConfig };
 

@@ -10,6 +10,8 @@ Opening a pull request deploys its branch and comments the preview URL on it, on
 
 Static files are uploaded only when the app does not already have them, so a redeploy that changes only server code sends just the server bundle.
 
+Before the hosting deploy, each run uploads `embeddables/config.yaml`, with each form merged with its `schema.yaml`, to the project config for that branch. That replaces running `em deploy` by hand, so the dashboard's pages directory and forms follow the code. A failed upload does not stop the hosting deploy, but it fails the run. Page thumbnails still refresh only when the production branch deploys, and they read the config uploaded in the same run.
+
 ### Setup
 
 1. In the Embeddables dashboard, open **Deployments**, register the app, and create a deploy key.
@@ -57,7 +59,7 @@ Static files are uploaded only when the app does not already have them, so a red
            with:
              node-version: 22
          - run: npm ci && npm run build
-         - uses: heysavvy/embeddables-actions/embeddables-deploy@v2
+         - uses: heysavvy/embeddables-actions/embeddables-deploy@v3
            with:
              deploy-key: ${{ secrets.EMBEDDABLES_DEPLOY_KEY }}
    ```
@@ -70,6 +72,7 @@ Static files are uploaded only when the app does not already have them, so a red
 | `app` | when config lists more than one app | | Hosting app slug to deploy. |
 | `config` | no | `embeddables/config.yaml` | Config path from the repository root. |
 | `api-origin` | no | `https://backend.embeddables.com` | Embeddables API origin. |
+| `deploy-config` | no | `true` | Upload the branch's project config (like `em deploy`) before the hosting deploy. |
 
 ### Outputs
 
@@ -77,6 +80,10 @@ Static files are uploaded only when the app does not already have them, so a red
 - `commit-url`: URL for this commit's deploy.
 - `uploaded-files`: number of static files this run uploaded.
 - `total-files`: number of static files in the client build.
+
+### Upgrading from `v2`
+
+Change `@v2` to `@v3`. No new secret is needed: the config upload uses the same deploy key. Every form listed in `embeddables/config.yaml` needs its `embeddables/forms/<id>/schema.yaml` committed, or the upload fails and the run turns red. Set `deploy-config: 'false'` to keep the `v2` behavior. `v2` keeps working.
 
 ### Upgrading from `v1`
 
