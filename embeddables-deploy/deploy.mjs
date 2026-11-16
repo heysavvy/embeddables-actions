@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 // * Vendored modules: this file runs from the action checkout, which has no node_modules.
-import { DEFAULT_API_ORIGIN, DeployError, deployHostingApp } from './vendor/deploy.mjs'
+import {
+  DEFAULT_API_ORIGIN,
+  DeployError,
+  deployHostingApp,
+  deployProjectConfig,
+} from './vendor/deploy.mjs'
 import { parseDocument } from './vendor/yaml.mjs'
 
 const API_VERSION = '2022-11-28'
@@ -66,6 +71,58 @@ export function deployFailureMessage(error) {
     return `Deploy failed${status}: ${error.message}`
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+export function deployConfigEnabled(value) {
+  return String(value ?? '').trim().toLowerCase() !== 'false'
+}
+
+/**
+ * The document `em deploy` uploads: config.yaml with each form replaced by its
+ * merged schema.yaml. Mirrors `assembleDeployConfigYaml` in packages/cli of the
+ * embeddables monorepo; the backend validates the result. JSON is valid YAML.
+ */
+export function assembleDeployConfig(configText, readSchema) {
+  const document = parseConfigDocument(configText)
+  const forms = document.forms ?? []
+  if (!Array.isArray(forms)) throw new Error('embeddables/config.yaml forms must be a sequence.')
+
+  const mergedForms = forms.map((form, index) => {
+    const id = form?.id
+    if (typeof id !== 'string' || id === '') {
+      throw new Error(`embeddables/config.yaml forms[${index}].id must be a non-empty string.`)
+    }
+    const label = `embeddables/forms/${id}/schema.yaml`
+    const text = readSchema(id)
+    if (text === null) throw new Error(`${label} was not found.`)
+
+    const parsed = parseDocument(text, { uniqueKeys: true })
+    const schema = parsed.errors.length === 0 ? parsed.toJSON() : null
+    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+      throw new Error(`${label} could not be parsed.`)
+    }
+    const { id: schemaId, name: _schemaName, fields, ...schemaMetadata } = schema
+    if (schemaId !== undefined && schemaId !== id) throw new Error(`${label} id does not match.`)
+    return { id, name: form.name, ...schemaMetadata, fields }
+  })
+
+  return `${JSON.stringify({ ...document, forms: mergedForms }, null, 2)}\n`
+}
+
+export function configUploadFailureMessage(error) {
+  if (error instanceof DeployError) {
+    return `Config upload failed${deployFailureMessage(error).slice('Deploy failed'.length)}`
+  }
+  return `Config upload failed: ${error instanceof Error ? error.message : String(error)}`
+}
+
+function readSchemaFile(embeddablesDir, formId) {
+  try {
+    return readFileSync(join(embeddablesDir, 'forms', formId, 'schema.yaml'), 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
 }
 
 /** Head commit time from the push event, so out-of-order deploys never move an alias back. */
@@ -170,10 +227,8 @@ function relativeDir(value, context) {
 async function main() {
   const root = process.env.GITHUB_WORKSPACE || process.cwd()
   const configPath = join(root, process.env.INPUT_CONFIG || 'embeddables/config.yaml')
-  const { projectId, app } = readPreviewConfig(
-    readFileSync(configPath, 'utf8'),
-    process.env.INPUT_APP,
-  )
+  const configText = readFileSync(configPath, 'utf8')
+  const { projectId, app } = readPreviewConfig(configText, process.env.INPUT_APP)
   const eventText = process.env.GITHUB_EVENT_PATH
     ? readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')
     : null
@@ -189,6 +244,32 @@ async function main() {
     console.log(`::add-mask::${deployKey.trim()}`)
   }
 
+  let configError = null
+  if (deployConfigEnabled(process.env.INPUT_DEPLOY_CONFIG) && deployKey?.trim()) {
+    try {
+      const embeddablesDir = dirname(configPath)
+      await deployProjectConfig({
+        deployKey: deployKey.trim(),
+        projectId,
+        branch,
+        configYaml: assembleDeployConfig(configText, (id) => readSchemaFile(embeddablesDir, id)),
+        apiOrigin: (process.env.INPUT_API_ORIGIN || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
+      })
+      console.log(`Uploaded project config for branch ${branch}.`)
+    } catch (error) {
+      configError = error
+      console.log(`::error::${configUploadFailureMessage(error)}`)
+    }
+  }
+
+  try {
+    await deployHosting({ root, projectId, app, deployKey, branch, sha, pullNumber, eventText })
+  } finally {
+    if (configError !== null) process.exitCode = 1
+  }
+}
+
+async function deployHosting({ root, projectId, app, deployKey, branch, sha, pullNumber, eventText }) {
   const committedAt =
     pullNumber === null
       ? eventText
