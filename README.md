@@ -44,7 +44,7 @@ Before the hosting deploy, each run uploads `embeddables/config.yaml`, with each
      pull-requests: write
 
    concurrency:
-     group: deploy-${{ github.head_ref || github.ref_name }}
+     group: deploy-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
      cancel-in-progress: true
 
    jobs:
