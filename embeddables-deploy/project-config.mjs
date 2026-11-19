@@ -1,6 +1,6 @@
-// The published vendored client uploads only branch-scoped config. Keep hosting
-// on that client; use the same HTTP contract here until a published client
-// supports the SHA-scoped PUT.
+// The 0.3.2 vendor supports SHA-scoped config, but its error parser throws on
+// JSON null responses and retries a non-retryable 422. Keep this PUT until the
+// published client handles those responses without losing the status.
 import { DeployError } from './vendor/deploy.mjs'
 
 export async function uploadProjectConfig(options) {
