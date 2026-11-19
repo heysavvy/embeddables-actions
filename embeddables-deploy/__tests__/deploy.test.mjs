@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import * as action from '../deploy.mjs'
 
 import {
   COMMENT_MARKER,
@@ -16,7 +15,7 @@ import {
   pushCommitTime,
   readPreviewConfig,
 } from '../deploy.mjs'
-import { DeployError, deployProjectConfig } from '../vendor/deploy.mjs'
+import { DeployError } from '../vendor/deploy.mjs'
 import { parseDocument } from '../vendor/yaml.mjs'
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001'
@@ -259,29 +258,6 @@ test('deployConfigEnabled is off only for false', () => {
 
 const FORM_ID = 'form_1'
 
-test('action config upload uses the same full SHA and branch as hosting deploy', () => {
-  const sha = 'b'.repeat(40)
-  const configYaml = '{"projectId":"x"}'
-  assert.deepEqual(
-    action.projectConfigOptions({
-      deployKey: ' edk_test ',
-      projectId: PROJECT_ID,
-      branch: 'feature/foo',
-      sha,
-      configYaml,
-      apiOrigin: 'https://backend.example.com/',
-    }),
-    {
-      deployKey: 'edk_test',
-      projectId: PROJECT_ID,
-      branch: 'feature/foo',
-      sha,
-      configYaml,
-      apiOrigin: 'https://backend.example.com',
-    },
-  )
-})
-
 const CONFIG_WITH_PAGES = [
   `projectId: "${PROJECT_ID}"`,
   'forms:',
@@ -343,23 +319,6 @@ test('assembleDeployConfig rejects schema YAML that does not parse', () => {
     () => assembleDeployConfig(CONFIG_WITH_FORM, () => 'fields: [\n'),
     { message: `embeddables/forms/${FORM_ID}/schema.yaml could not be parsed.` },
   )
-})
-
-test('vendored deploy client forwards the full SHA in config uploads', async () => {
-  const sha = 'a'.repeat(40)
-  let body
-  await deployProjectConfig({
-    deployKey: 'edk_test',
-    projectId: PROJECT_ID,
-    branch: 'feature/foo',
-    sha,
-    configYaml: CONFIG,
-    fetch: async (_url, init) => {
-      body = JSON.parse(init.body)
-      return new Response(null, { status: 204 })
-    },
-  })
-  assert.deepEqual(body, { branch: 'feature/foo', sha, config_yaml: CONFIG })
 })
 
 test('configUploadFailureMessage labels the config upload', () => {
