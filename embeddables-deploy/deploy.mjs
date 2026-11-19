@@ -65,6 +65,18 @@ export function deployOptions({ root, projectId, app, deployKey, branch, sha, co
   }
 }
 
+/** Use the same push identity for the config upload and hosting deploy. */
+export function projectConfigOptions({ deployKey, projectId, branch, sha, configYaml, apiOrigin }) {
+  return {
+    deployKey: deployKey.trim(),
+    projectId,
+    branch,
+    sha,
+    configYaml,
+    apiOrigin: (apiOrigin || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
+  }
+}
+
 export function deployFailureMessage(error) {
   if (error instanceof DeployError) {
     const status = error.status === null ? '' : ` (${error.status}${error.code ? ` ${error.code}` : ''})`
@@ -248,13 +260,14 @@ async function main() {
   if (deployConfigEnabled(process.env.INPUT_DEPLOY_CONFIG) && deployKey?.trim()) {
     try {
       const embeddablesDir = dirname(configPath)
-      await deployProjectConfig({
-        deployKey: deployKey.trim(),
+      await deployProjectConfig(projectConfigOptions({
+        deployKey,
         projectId,
         branch,
+        sha,
         configYaml: assembleDeployConfig(configText, (id) => readSchemaFile(embeddablesDir, id)),
-        apiOrigin: (process.env.INPUT_API_ORIGIN || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
-      })
+        apiOrigin: process.env.INPUT_API_ORIGIN,
+      }))
       console.log(`Uploaded project config for branch ${branch}.`)
     } catch (error) {
       configError = error

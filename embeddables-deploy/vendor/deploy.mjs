@@ -1,4 +1,4 @@
-// Vendored from @embeddables/deploy@0.3.0 by scripts/vendor-deploy.sh. Do not edit by hand.
+// Vendored from @embeddables/deploy@0.3.1 (local workspace build) by scripts/vendor-deploy.sh. Do not edit by hand.
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
@@ -280,8 +280,8 @@ async function runPool(items, concurrency, task) {
 //#endregion
 //#region src/project-config.ts
 /**
-* Uploads a branch's deploy config, the same document and storage as `em deploy`. The backend
-* validates it. The PUT overwrites, so it retries like the deploy calls.
+* Uploads a branch's deploy config. A SHA enables a push-scoped upload; omitting it
+* preserves the legacy branch upload used by older callers.
 */
 async function deployProjectConfig(options) {
 	await createApi(options).retrying("/hosting/v1/project-config", {
@@ -289,7 +289,8 @@ async function deployProjectConfig(options) {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
 			branch: options.branch,
-			config_yaml: options.configYaml
+			config_yaml: options.configYaml,
+			...options.sha === void 0 ? {} : { sha: options.sha }
 		})
 	});
 }
