@@ -6,6 +6,7 @@ import {
   assembleDeployConfig,
   commentMarker,
   configUploadFailureMessage,
+  configUploadOptions,
   deployConfigEnabled,
   deployFailureMessage,
   deployOptions,
@@ -327,4 +328,15 @@ test('configUploadFailureMessage labels the config upload', () => {
     'Config upload failed (422 validation.failed): Bad config',
   )
   assert.equal(configUploadFailureMessage(new Error('boom')), 'Config upload failed: boom')
+})
+
+test('configUploadOptions uses the same branch and full SHA as hosting', () => {
+  const sha = 'f'.repeat(40)
+  assert.deepEqual(configUploadOptions({
+    deployKey: ' edk_test ', projectId: PROJECT_ID, branch: 'feature/x', sha,
+    configYaml: '{}', apiOrigin: 'https://api.example.test/',
+  }), {
+    deployKey: 'edk_test', projectId: PROJECT_ID, branch: 'feature/x', sha,
+    configYaml: '{}', apiOrigin: 'https://api.example.test',
+  })
 })
