@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Vendor a published @embeddables/deploy build into the action.
+# Vendor a published @embeddables/deploy build or a locally built package.
 # Usage: scripts/vendor-deploy.sh 0.1.0
+#        scripts/vendor-deploy.sh /path/to/embeddables/packages/deploy-client
 set -euo pipefail
 
 VERSION="${1:?usage: scripts/vendor-deploy.sh <version>}"
+if [[ -d "$VERSION" ]]; then
+  SOURCE="@embeddables/deploy@$(node -p 'require(process.argv[1]).version' "$VERSION/package.json") (local workspace build)"
+else
+  SOURCE="@embeddables/deploy@${VERSION}"
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/embeddables-deploy/vendor/deploy.mjs"
 WORK="$(mktemp -d)"
@@ -17,8 +23,8 @@ if grep -E "^import .* from ['\"]" "$WORK/package/dist/index.js" | grep -qvE "fr
 fi
 
 {
-  echo "// Vendored from @embeddables/deploy@${VERSION} by scripts/vendor-deploy.sh. Do not edit by hand."
+  echo "// Vendored from ${SOURCE} by scripts/vendor-deploy.sh. Do not edit by hand."
   grep -v '^//# sourceMappingURL=' "$WORK/package/dist/index.js"
 } >"$OUT"
 
-echo "Wrote $OUT from @embeddables/deploy@${VERSION}"
+echo "Wrote $OUT from ${SOURCE}"
