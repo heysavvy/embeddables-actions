@@ -6,16 +6,18 @@ set -euo pipefail
 
 VERSION="${1:?usage: scripts/vendor-deploy.sh <version>}"
 if [[ -d "$VERSION" ]]; then
-  SOURCE="@embeddables/deploy@$(node -p 'require(process.argv[1]).version' "$VERSION/package.json") (local workspace build)"
+  PACKAGE_SPEC="$(cd "$VERSION" && pwd)"
+  SOURCE="@embeddables/deploy@$(node -p 'require(process.argv[1]).version' "$PACKAGE_SPEC/package.json") (local workspace build)"
 else
-  SOURCE="@embeddables/deploy@${VERSION}"
+  PACKAGE_SPEC="@embeddables/deploy@${VERSION}"
+  SOURCE="$PACKAGE_SPEC"
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/embeddables-deploy/vendor/deploy.mjs"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-(cd "$WORK" && npm pack --silent "@embeddables/deploy@${VERSION}" >/dev/null && tar xzf ./*.tgz)
+(cd "$WORK" && npm pack --silent "$PACKAGE_SPEC" >/dev/null && tar xzf ./*.tgz)
 
 if grep -E "^import .* from ['\"]" "$WORK/package/dist/index.js" | grep -qvE "from ['\"]node:"; then
   echo "@embeddables/deploy@${VERSION} imports a non-builtin module; it cannot be vendored as one file." >&2
