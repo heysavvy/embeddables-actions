@@ -6,8 +6,8 @@ import {
   DEFAULT_API_ORIGIN,
   DeployError,
   deployHostingApp,
-  deployProjectConfig,
 } from './vendor/deploy.mjs'
+import { uploadProjectConfig } from './project-config.mjs'
 import { parseDocument } from './vendor/yaml.mjs'
 
 const API_VERSION = '2022-11-28'
@@ -107,6 +107,17 @@ export function assembleDeployConfig(configText, readSchema) {
   })
 
   return `${JSON.stringify({ ...document, forms: mergedForms }, null, 2)}\n`
+}
+
+export function configUploadOptions({ deployKey, projectId, branch, sha, configYaml, apiOrigin }) {
+  return {
+    deployKey: deployKey.trim(),
+    projectId,
+    branch,
+    sha,
+    configYaml,
+    apiOrigin: (apiOrigin || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
+  }
 }
 
 export function configUploadFailureMessage(error) {
@@ -248,13 +259,14 @@ async function main() {
   if (deployConfigEnabled(process.env.INPUT_DEPLOY_CONFIG) && deployKey?.trim()) {
     try {
       const embeddablesDir = dirname(configPath)
-      await deployProjectConfig({
-        deployKey: deployKey.trim(),
+      await uploadProjectConfig(configUploadOptions({
+        deployKey,
         projectId,
         branch,
+        sha,
         configYaml: assembleDeployConfig(configText, (id) => readSchemaFile(embeddablesDir, id)),
-        apiOrigin: (process.env.INPUT_API_ORIGIN || DEFAULT_API_ORIGIN).replace(/\/$/, ''),
-      })
+        apiOrigin: process.env.INPUT_API_ORIGIN,
+      }))
       console.log(`Uploaded project config for branch ${branch}.`)
     } catch (error) {
       configError = error

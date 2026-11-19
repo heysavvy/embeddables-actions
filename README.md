@@ -10,7 +10,7 @@ Opening a pull request deploys its branch and comments the preview URL on it, on
 
 Static files are uploaded only when the app does not already have them, so a redeploy that changes only server code sends just the server bundle.
 
-Before the hosting deploy, each run uploads `embeddables/config.yaml`, with each form merged with its `schema.yaml`, to the project config for that branch. That replaces running `em deploy` by hand, so the dashboard's pages directory and forms follow the code. A failed upload does not stop the hosting deploy, but it fails the run. Page thumbnails still refresh only when the production branch deploys, and they read the config uploaded in the same run.
+Before the hosting deploy, each run uploads `embeddables/config.yaml`, with each form merged with its `schema.yaml`, to the project config for that branch and full commit SHA. That replaces running `em deploy` by hand, so the dashboard's pages directory and forms follow the code. The Action sends this config PUT directly because its published vendored deploy client does not support SHA-scoped config; the hosting deploy still uses the unchanged vendored client. A failed upload does not stop the hosting deploy, but it fails the run. Page thumbnails still refresh only when the production branch deploys, and they read the config uploaded in the same run.
 
 ### Setup
 
